@@ -8,7 +8,12 @@ interface node {
     nodeType: NodeType
     uuid: string;
     ip: string;
-    lastActived: number
+    lastActived: number,
+    formattedLastActived: string,
+    cpuUsage: number,
+    cpuFree: number,
+    totalmem: number,
+    freemem: number
 }
 
 interface nodeTable {

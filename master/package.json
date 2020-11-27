@@ -3,32 +3,24 @@
   "version": "1.0.0",
   "main": "index.js",
   "license": "MIT",
-  "scripts": {
-    "test": "jest",
-    "test:watchAll": "jest --watchAll"
-  },
+  "scripts": {},
   "devDependencies": {
     "@babel/core": "^7.9.0",
     "@babel/preset-env": "^7.9.5",
     "@babel/preset-typescript": "^7.9.0",
-    "@shelf/jest-mongodb": "^1.1.5",
     "@types/amqplib": "^0.5.13",
     "@types/axios": "^0.14.0",
     "@types/cheerio": "^0.22.17",
     "@types/ioredis": "^4.14.9",
-    "@types/jest": "^25.2.1",
     "@types/koa": "^2.11.3",
     "@types/koa-bodyparser": "^4.3.0",
     "@types/koa-router": "^7.4.0",
     "@types/lodash": "^4.14.149",
     "@types/mongoose": "^5.7.8",
-    "babel-jest": "^25.2.6",
-    "jest": "^25.2.7",
-    "jest-html-reporter": "^3.1.0",
-    "ts-jest": "^25.3.1",
     "typescript": "^3.8.3"
   },
   "dependencies": {
+    "@types/uuid": "^8.3.0",
     "address": "^1.1.2",
     "amqplib": "^0.5.5",
     "axios": "^0.19.2",
@@ -40,6 +32,6 @@
     "lodash": "^4.17.15",
     "mongoose": "^5.9.7",
     "mongoose-gridfs": "^1.2.34",
-    "uuid": "^8.1.0"
+    "uuid": "^8.3.0"
   }
 }

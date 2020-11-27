@@ -1,16 +1,18 @@
+import {Channel, ConsumeMessage} from 'amqplib'
+import { HeartBeatDLMQ, HeartBeatMessageQueue, TimerMessageQueue, URLMessageQueue } from "./messageQueue";
 import { MongoConnectionManager, RedisConnectionManager } from "./db";
-import { URLMessageQueue, HeartBeatDLMQ, HeartBeatMessageQueue } from "./messageQueue";
-import {HeartBeatMessage, NodeType} from "../types/rabbitmq"
+import { NodeType, nodeTable } from "../types/node";
+
 import EventEmitter from "events";
-import crawlerRouter from "../api/crawler";
+import {HeartBeatMessage} from "../types/rabbitmq"
 import Router from "koa-router";
+import address from "address"
+import config from "../config"
+import crawlerRouter from "../api/crawler";
 import logHandler from "../exceptions/logHandler"
 import logLevel from "../types/log"
-import { v4 as uuidv4 } from 'uuid';
-import address from "address"
-import { nodeTable } from "../types/node";
 import {startCronJob} from "../util"
-import config from "../config"
+import { v4 as uuidv4 } from 'uuid';
 
 class InitManager {
     static mongo: MongoConnectionManager;
@@ -36,10 +38,10 @@ class InitManager {
         this.initRouter();
         await Promise.all([this.initDB(), this.initMQ(), this.initRedis()]);
         // this.urlMQ.registerGetter()
-        this.heartBeatDLMQ.registerGetter()
-        this.workerHBMQ.registerGetter()
-        const heartBeat = new HeartBeatMessage(NodeType.master, new Date().getTime(), this.uuid, this.ip)
-        this.masterHBMQ.put(heartBeat)
+        // this.heartBeatDLMQ.registerGetter()
+        // this.workerHBMQ.registerGetter()
+        // const heartBeat = new HeartBeatMessage(NodeType.master, new Date().getTime(), this.uuid, this.ip)
+        // this.masterHBMQ.put(heartBeat)
         startCronJob(this.updateNodeTable.bind(this), 1000)
         
     }
@@ -53,10 +55,13 @@ class InitManager {
     }
 
     static async initMQ() {
-        this.urlMQ = await URLMessageQueue.init("URL");
-        this.masterHBMQ = await HeartBeatMessageQueue.init("masterHBMQ", undefined, "masterHBMQ")
-        this.workerHBMQ = await HeartBeatMessageQueue.init("workerHBMQ", {}, "workerHBMQ")
-        this.heartBeatDLMQ = await HeartBeatDLMQ.init("HBDLMQ"+this.uuid)
+        // this.urlMQ = await URLMessageQueue.init("URL");
+        // this.masterHBMQ = await HeartBeatMessageQueue.init("masterHBMQ", undefined, "masterHBMQ")
+        // this.workerHBMQ = await HeartBeatMessageQueue.init("workerHBMQ", {}, "workerHBMQ")
+        // this.heartBeatDLMQ = await HeartBeatDLMQ.init("HBDLMQ"+this.uuid)
+        await TimerMessageQueue.initTimer("test", {
+            messageTtl: 1000
+        }, () => console.log('test'))
 
     }
 
@@ -73,9 +78,10 @@ class InitManager {
         //     tasksChain(url);
         // });
 
-        this.eventCenter.on("newHeartBeat", _ => {
+        this.eventCenter.on("newHeartBeat", async (channel: Channel, msg: ConsumeMessage) => {
             const heartBeat = new HeartBeatMessage(NodeType.master, new Date().getTime(), this.uuid, this.ip)
-            this.masterHBMQ.put(heartBeat)
+            await this.masterHBMQ.put(heartBeat)
+            channel.ack(msg)
         })
 
         this.eventCenter.on('log',function(level: logLevel, message: string, err ?:Error){

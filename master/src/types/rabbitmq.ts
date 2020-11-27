@@ -1,12 +1,21 @@
-import amqp from "amqplib";
 import {NodeType} from "./node"
-
+import amqp from "amqplib";
 
 enum MessageSignal {
     kill
 }
 
 type exchangeType = "direct" | "fanout" | "topic";
+
+
+type MQSchemaTypes =
+  | "URLMessageQueue"
+  | "HeartBeatMessageQueue"
+  | "HeartBeatDLMQ"
+  | "LoadBalancingMQ"
+  | "LoadBalancingDLMQ"
+  | "TimerMessageQueue"
+  | "TimerDLMQ"
 
 interface messageQueue {
     baseExchangeCfg: amqp.Options.AssertExchange;
@@ -23,6 +32,19 @@ interface messageQueue {
     routingKey?: string;
 }
 
+interface messageQueueCfg {
+  schemaName:  MQSchemaTypes
+  exchangeName: string;
+  exchangeType?: exchangeType;
+  exchangeCfg?: amqp.Options.AssertExchange;
+  queueCfg?: amqp.Options.AssertQueue;
+  pubCfg?: amqp.Options.Publish;
+  subCfg?: amqp.Options.Consume;
+  queueName?: string;
+  routingKey?: string;
+}
+
+
 class HeartBeatMessage {
     nodeType: NodeType;
     timestamp: number;
@@ -38,4 +60,14 @@ class HeartBeatMessage {
     }
 }
 
-export { exchangeType, messageQueue, HeartBeatMessage, NodeType };
+interface LoadBalancingMessage {
+  priority: number,
+  prefecthedCount: number
+}
+
+interface TimerMessage {
+  sentTime: string
+  ttl: number
+}
+
+export { exchangeType, messageQueue, HeartBeatMessage, messageQueueCfg, MQSchemaTypes, LoadBalancingMessage, TimerMessage };
