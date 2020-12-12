@@ -2,17 +2,17 @@ import {
   HeartBeatMessage,
   LoadBalancingMessage,
   MQSchemaTypes,
+  MockTaskMessage,
   TimerMessage,
   exchangeType,
   messageQueue,
   messageQueueCfg
 } from "../types/rabbitmq";
 
-import { MQParamException } from "../exceptions/exception";
+import EventNames from "../types/events"
 import amqp from "amqplib";
 import config from "../config/index";
 import { merge } from "lodash";
-import { node } from "../types/node";
 
 type Constructor<T> = {
   new (...args: any[]): T;
@@ -79,8 +79,35 @@ function getMQSchema(config: messageQueueCfg) {
 
     
 
-    async put<T>(message: T): Promise<void> {}
-    async registerGetter(): Promise<void> {}
+    async put(message: unknown): Promise<void> {}
+    async registerGetter(): Promise<void> {
+    }
+    protected async registerGetterAndEmitEvent(eventName: string): Promise<void> {
+      const channel = MessageQueue.channel;
+      await channel.consume(
+        this.queueName,
+        (msg) => {
+          if (msg) {
+            global.resourceManager.eventCenter.emit(
+              eventName,
+              channel,
+              msg
+            );
+          } else {
+            console.warn("consumer was cancelled");
+          }
+        },
+        this.subCfg
+      );
+    }
+    protected async publish(message: string):Promise<void> {
+      MessageQueue.channel.publish(
+        this.exchangeName,
+        this.routingKey,
+        Buffer.from(message),
+        this.pubCfg
+      );
+    }
   };
 }
 abstract class MessageQueue {
@@ -156,9 +183,13 @@ abstract class MessageQueue {
     await this.channel.close();
   }
 
-  abstract async put<T>(message: T): Promise<void>;
+  abstract async put(message: unknown): Promise<void>;
 
   abstract async registerGetter(): Promise<void>;
+
+  static getChannel(){
+    return this.channel
+  }
 }
 
 @addToMQSchemas
@@ -167,49 +198,12 @@ class URLMessageQueue extends getMQSchema({
   schemaName: "URLMessageQueue",
   routingKey: "URL",
 }) {
-  constructor(
-    queueName: string,
-    queueCfg?: amqp.Options.AssertQueue,
-    routingKey?: string
-  ) {
-    super(queueName, queueCfg, routingKey);
-  }
-  async put<T>(url: T): Promise<void> {
-    if (typeof url !== "string") {
-      return Promise.reject({
-        logLevel: "ERROR",
-        message: `URL为${url},不是string类型`,
-        error: new MQParamException("url必须为string类型"),
-      });
-    }
-    // await this.initQueue();
-    MessageQueue.channel.publish(
-      this.exchangeName,
-      this.routingKey,
-      Buffer.from(url),
-      this.pubCfg
-    );
+ 
+  async put(url: string): Promise<void> {
+    await this.publish(url)
   }
 
   async registerGetter(): Promise<void> {
-    const channel = MessageQueue.channel;
-    // await this.initQueue();
-    await channel.consume(
-      this.queueName,
-      (urlMsg) => {
-        if (urlMsg) {
-          global.resourceManager.eventCenter.emit(
-            "newUrl",
-            urlMsg.content.toString(),
-            channel,
-            urlMsg
-          );
-        } else {
-          console.warn("consumer was cancelled");
-        }
-      },
-      this.subCfg
-    );
   }
 }
 
@@ -217,64 +211,57 @@ class URLMessageQueue extends getMQSchema({
 class TimerMessageQueue extends getMQSchema({
   exchangeName: "TimerExchange",
   schemaName: "TimerMessageQueue",
-  routingKey: "Timer",
 }) {
-  crontab!: Function;
+  crontab!: (channel: amqp.Channel, msg: amqp.ConsumeMessage) => void;
 
-  constructor(
-    queueName: string,
-    queueCfg: { messageTtl: number } & 
-      amqp.Options.AssertQueue
-  ) {
-    super(queueName, queueCfg);
+  static async init(): Promise<never> {
+    throw new Error("should use initTimer method");
   }
 
-  static async init(): Promise<never>{
-    throw new Error('should use initTimer method')
-  }
-
-  static async initTimer<T extends typeof MessageQueue>(
-    queueName: string,
+  static async initTimer<T extends typeof TimerMessageQueue>(
+    taskName: string,
     queueCfg: { messageTtl: number } & Omit<
       amqp.Options.AssertQueue,
       "deadLetterExchange"
     >,
-    crontab : Function
-  ): Promise<T['prototype']> {
-    const deadLetterExchange = `${queueName}_DLEX`
-     const newQueueCfg: amqp.Options.AssertQueue = {
-       ...queueCfg,
-       deadLetterExchange,
-     };
-    const instance: InstanceType<typeof TimerMessageQueue> = await Object.getPrototypeOf(TimerMessageQueue).init(queueName, newQueueCfg)
-    const proto = Object.getPrototypeOf(instance)
-    proto.crontab = crontab
+    crontab: (channel: amqp.Channel, msg: amqp.ConsumeMessage) => void,
+    immediately = false
+  ): Promise<T["prototype"]> {
+    const deadLetterExchange = `${taskName}_DLEX`;
+    const newQueueCfg: amqp.Options.AssertQueue = {
+      ...queueCfg,
+      deadLetterExchange,
+    };
+    // use task name as routingKey
+    const queueName = `${taskName}_MQ`;
+    const routingKey = taskName;
+    const instance: InstanceType<
+      typeof TimerMessageQueue
+    > = await Object.getPrototypeOf(TimerMessageQueue).init(
+      queueName,
+      newQueueCfg,
+      routingKey
+    );
+    const proto = Object.getPrototypeOf(instance);
+    proto.crontab = crontab;
 
     const TimerDLMQClass = class TimerDLMQ extends getMQSchema({
       exchangeName: deadLetterExchange,
       schemaName: "TimerDLMQ",
-      exchangeType: "fanout"
+      exchangeType: "fanout",
     }) {
-      constructor(
-        queueName: string,
-        queueCfg?: amqp.Options.AssertQueue,
-        routingKey?: string
-      ) {
-        super(queueName, queueCfg, routingKey);
-      }
-
       async registerGetter(): Promise<void> {
         const channel = MessageQueue.channel;
-        await this.initQueue();
         await channel.consume(
           this.queueName,
-          (msg) => {
+          async (msg) => {
             if (msg) {
-              crontab(msg)
+              await global.resourceManager.redis.connection.del(this.queueName);
+              crontab(channel, msg);
               instance.put({
                 sentTime: Date().toString(),
-                ttl: queueCfg.messageTtl
-              })
+                ttl: queueCfg.messageTtl,
+              });
             } else {
               console.warn("consumer was cancelled");
             }
@@ -283,197 +270,89 @@ class TimerMessageQueue extends getMQSchema({
         );
       }
     };
-    addToMQSchemas(TimerDLMQClass)
+    addToMQSchemas(TimerDLMQClass);
 
-    const timerDLMQ = await TimerDLMQClass.init(`${queueName}_DLMQ`)
-    await timerDLMQ.registerGetter()
+    const timerDLMQ = await TimerDLMQClass.init(
+      `${queueName}_DLMQ_${global.resourceManager.uuid}`
+    );
+    await timerDLMQ.registerGetter();
 
-    await instance.put({
-      sentTime: Date().toString(),
-      ttl: queueCfg.messageTtl,
-    });
-    return instance
+    if (immediately) {
+      await timerDLMQ.put({
+        sentTime: Date().toString(),
+        ttl: queueCfg.messageTtl,
+      });
+    } else {
+      await instance.put({
+        sentTime: Date().toString(),
+        ttl: queueCfg.messageTtl,
+      });
+    }
+    return instance;
   }
 
-  async put<T>(timerMessage: T & TimerMessage) {
-    await this.initQueue();
-    MessageQueue.channel.publish(
-      this.exchangeName,
-      this.routingKey,
-      Buffer.from(JSON.stringify(timerMessage)),
-      this.pubCfg
+  async put(timerMessage: TimerMessage) {
+    const notLocked = await global.resourceManager.redis.connection.setnx(
+      this.queueName,
+      1
     );
+    if (notLocked) {
+      await this.publish(JSON.stringify(timerMessage));
+    }
   }
 }
 
 @addToMQSchemas
 class HeartBeatMessageQueue extends getMQSchema({
   exchangeName: "HeartBeatExchange",
-  queueCfg: {
-    deadLetterExchange: "HeartBeatDLEX",
-    messageTtl: 2000,
-  },
   routingKey: "HeartBeat",
   schemaName: "HeartBeatMessageQueue",
 }) {
-  constructor(
-    queueName: string,
-    queueCfg?: amqp.Options.AssertQueue,
-    routingKey?: string
-  ) {
-    super(queueName, queueCfg, routingKey);
-  }
 
-  async put<T>(heartBeatMessage: T & HeartBeatMessage): Promise<void> {
-    await this.initQueue();
-    MessageQueue.channel.publish(
-      this.exchangeName,
-      this.routingKey,
-      Buffer.from(JSON.stringify(heartBeatMessage)),
-      this.pubCfg
-    );
-  }
+  async put(heartBeatMessage: HeartBeatMessage): Promise<void> {}
 
   async registerGetter(): Promise<void> {
-    const channel = MessageQueue.channel;
-    await this.initQueue();
-    await channel.consume(
-      this.queueName,
-      (heartBeatMsg) => {
-        if (heartBeatMsg) {
-          const {
-            nodeType,
-            uuid,
-            ip,
-            timestamp,
-            formattedDate,
-            cpuFree,
-            cpuUsage,
-            freemem,
-            totalmem,
-          } = JSON.parse(heartBeatMsg.content.toString());
-          const nodeProps: node = {
-            nodeType,
-            uuid,
-            ip,
-            lastActived: timestamp,
-            formattedLastActived: formattedDate,
-            cpuFree,
-            cpuUsage,
-            freemem,
-            totalmem,
-          };
-          global.resourceManager.nodeTable[uuid] = nodeProps;
-          channel.ack(heartBeatMsg);
-        } else {
-          console.warn("consumer was cancelled");
-        }
-      },
-      this.subCfg
-    );
+    await this.registerGetterAndEmitEvent(EventNames.newHeartBeat)
+  }
+}
+
+
+@addToMQSchemas
+class LoadBalancingMQ extends getMQSchema({
+  exchangeName: "LoadBalancingEX",
+  routingKey: "LoadBalancing",
+  schemaName: "LoadBalancingMQ",
+}) {
+
+  async put(loadBalancingMessage: Record<string, {task: Record<string, LoadBalancingMessage>}>): Promise<void> {
+    await this.publish(JSON.stringify(loadBalancingMessage))
   }
 }
 
 @addToMQSchemas
-class HeartBeatDLMQ extends getMQSchema({
-  exchangeName: "HeartBeatDLEX",
-  exchangeType: "fanout",
-  schemaName: "HeartBeatDLMQ",
+class MockTaskMQ extends getMQSchema({
+  exchangeName: "MockTaskEX",
+  routingKey: "MockTask",
+  schemaName: "MockTaskMQ",
 }) {
-  constructor(
-    queueName: string,
-    queueCfg?: amqp.Options.AssertQueue,
-    routingKey?: string
-  ) {
-    super(queueName, queueCfg, routingKey);
+  async put(
+    mockTaskMessage: MockTaskMessage
+  ): Promise<void> {
+    await this.publish(JSON.stringify(mockTaskMessage))
   }
+}
 
-  async put<T>(heartBeatMessage: T & HeartBeatMessage): Promise<void> {}
-
+@addToMQSchemas
+class MockStateMQ extends getMQSchema({
+  exchangeName: "MockStateEX",
+  routingKey: "MockState",
+  schemaName: "MockStateMQ",
+}) {
   async registerGetter(): Promise<void> {
-    const channel = MessageQueue.channel;
-    await this.initQueue();
-    await channel.consume(
-      this.queueName,
-      (msg) => {
-        if (msg) {
-          global.resourceManager.eventCenter.emit("newHeartBeat", channel, msg);
-        } else {
-          console.warn("consumer was cancelled");
-        }
-      },
-      this.subCfg
-    );
+    await this.registerGetterAndEmitEvent(EventNames.mockState)
   }
 }
 
 
 
-// @addToMQSchemas
-// class LoadBalancingMQ extends getMQSchema({
-//   exchangeName: "LoadBalancingEX",
-//   queueCfg: {
-//     deadLetterExchange: "LoadBalancingDLEX",
-//     messageTtl: 2000,
-//   },
-//   routingKey: "LoadBalancing",
-//   schemaName: "LoadBalancingMQ",
-// }) {
-//   constructor(
-//     queueName: string,
-//     queueCfg?: amqp.Options.AssertQueue,
-//     routingKey?: string
-//   ) {
-//     super(queueName, queueCfg, routingKey);
-//   }
-
-//   async put<T>(loadBalancingMessage: T & Record<string, LoadBalancingMessage>): Promise<void> {
-//     await this.initQueue();
-//     MessageQueue.channel.publish(
-//       this.exchangeName,
-//       this.routingKey,
-//       Buffer.from(JSON.stringify(loadBalancingMessage)),
-//       this.pubCfg
-//     );
-//   }
-// }
-
-// @addToMQSchemas
-// class LoadBalancingDLMQ extends getMQSchema({
-//   exchangeName: "LoadBalancingDLEX",
-//   exchangeType: "fanout",
-//   schemaName: "LoadBalancingDLMQ",
-// }) {
-//   constructor(
-//     queueName: string,
-//     queueCfg?: amqp.Options.AssertQueue,
-//     routingKey?: string
-//   ) {
-//     super(queueName, queueCfg, routingKey);
-//   }
-
-//   async put<T>(
-//     loadBalancingMessage: T & Record<string, LoadBalancingMessage>
-//   ): Promise<void> {}
-
-//   async registerGetter(): Promise<void> {
-//     const channel = MessageQueue.channel;
-//     await this.initQueue();
-//     await channel.consume(
-//       this.queueName,
-//       (msg) => {
-//         if (msg) {
-//           global.resourceManager.eventCenter.emit("newLoadBalancingConfig", channel, msg);
-//         } else {
-//           console.warn("consumer was cancelled");
-//         }
-//       },
-//       this.subCfg
-//     );
-//   }
-// }
-
-
-
-
-export { URLMessageQueue, HeartBeatMessageQueue, HeartBeatDLMQ, TimerMessageQueue };
+export { URLMessageQueue, HeartBeatMessageQueue, TimerMessageQueue, MockStateMQ, MockTaskMQ, LoadBalancingMQ, MessageQueue };

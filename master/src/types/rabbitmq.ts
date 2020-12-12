@@ -16,6 +16,8 @@ type MQSchemaTypes =
   | "LoadBalancingDLMQ"
   | "TimerMessageQueue"
   | "TimerDLMQ"
+  | "MockTaskMQ"
+  | "MockStateMQ"
 
 interface messageQueue {
     baseExchangeCfg: amqp.Options.AssertExchange;
@@ -61,8 +63,8 @@ class HeartBeatMessage {
 }
 
 interface LoadBalancingMessage {
-  priority: number,
-  prefecthedCount: number
+  priority ?: number,
+  prefecthedCount ?: number
 }
 
 interface TimerMessage {
@@ -70,4 +72,16 @@ interface TimerMessage {
   ttl: number
 }
 
-export { exchangeType, messageQueue, HeartBeatMessage, messageQueueCfg, MQSchemaTypes, LoadBalancingMessage, TimerMessage };
+interface MockTaskMessage {
+  processingTime: number
+  async : boolean
+  taskID: number
+}
+
+interface MockStateMessage {
+  uuid: string;
+  processedTasksNumber: number;
+  totalProcessingTime: number;
+}
+
+export { exchangeType, messageQueue, HeartBeatMessage, messageQueueCfg, MQSchemaTypes, LoadBalancingMessage, TimerMessage, MockTaskMessage, MockStateMessage };

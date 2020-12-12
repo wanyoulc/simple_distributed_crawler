@@ -20,11 +20,13 @@
     "typescript": "^3.8.3"
   },
   "dependencies": {
+    "@types/command-line-args": "^5.0.0",
     "@types/uuid": "^8.3.0",
     "address": "^1.1.2",
     "amqplib": "^0.5.5",
     "axios": "^0.19.2",
     "cheerio": "^1.0.0-rc.3",
+    "command-line-args": "^5.1.1",
     "ioredis": "^4.16.1",
     "koa": "^2.11.0",
     "koa-bodyparser": "^4.3.0",
@@ -32,6 +34,7 @@
     "lodash": "^4.17.15",
     "mongoose": "^5.9.7",
     "mongoose-gridfs": "^1.2.34",
+    "stdio": "^2.1.1",
     "uuid": "^8.3.0"
   }
 }

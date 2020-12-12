@@ -1,3 +1,5 @@
+import {Task} from './task'
+
 enum NodeType {
     master,
     worker 
@@ -13,11 +15,12 @@ interface node {
     cpuUsage: number,
     cpuFree: number,
     totalmem: number,
-    freemem: number
+    freemem: number,
+    task: Record<string, Task>
 }
 
-interface nodeTable {
+interface NodeTable {
     [index: string]: node
 }
 
-export {NodeType, node, nodeTable}
+export {NodeType, node, NodeTable}
