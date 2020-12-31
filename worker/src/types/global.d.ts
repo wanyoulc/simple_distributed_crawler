@@ -10,6 +10,7 @@ declare global {
                 urlMQ: URLMessageQueue;
                 redis: RedisConnectionManager;
                 eventCenter: EventEmitter.EventEmitter;
+                uuid: string
             };
         }
     }

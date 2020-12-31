@@ -183,9 +183,9 @@ abstract class MessageQueue {
     await this.channel.close();
   }
 
-  abstract async put(message: unknown): Promise<void>;
+  abstract put(message: unknown): Promise<void>;
 
-  abstract async registerGetter(): Promise<void>;
+  abstract registerGetter(): Promise<void>;
 
   static getChannel(){
     return this.channel

@@ -7,7 +7,6 @@ import exceptionHandler from "./middleware/exceptionEmitter"
 import {ask} from 'stdio'
 
 async function main() {
-    process.env.NODE_ENV = 'dev'
     const mainDefinitions: commandLineArgs.OptionDefinition[] = [
       { name: "mock", type: Boolean, alias: "m" },
       {name: "port", type: Number, alias: "p"}

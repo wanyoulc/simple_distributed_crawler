@@ -1,0 +1,9 @@
+master/node_modules/
+master/dist/
+master/.vscode/
+master/.git/
+
+worker/node_modules/
+worker/dist/
+worker/.vscode/
+worker/.git/

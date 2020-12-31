@@ -1,3 +1,4 @@
+import {Task} from './task'
 import amqp from "amqplib";
 
 enum NodeType {
@@ -14,7 +15,14 @@ type exchangeType = "direct" | "fanout" | "topic";
 type MQSchemaTypes =
   | "URLMessageQueue"
   | "HeartBeatMessageQueue"
-  | "HeartBeatDLMQ"; 
+  | "HeartBeatDLMQ"
+  | "LoadBalancingMQ"
+  | "LoadBalancingDLMQ"
+  | "TimerMessageQueue"
+  | "TimerDLMQ"
+  | "MockTaskMQ"
+  | "MockStateMQ";
+
   
 interface messageQueue {
     baseExchangeCfg: amqp.Options.AssertExchange;
@@ -45,27 +53,59 @@ interface messageQueueCfg {
 
 
 class HeartBeatMessage {
-    nodeType: NodeType;
-    timestamp: number;
-    formattedDate: string
-    uuid: string
-    ip : string
-    cpuFree : number
-    cpuUsage: number
-    totalmem : number
-    freemem : number
+  nodeType: NodeType;
+  timestamp: number;
+  formattedDate: string;
+  uuid: string;
+  ip: string;
+  cpuFree: number;
+  cpuUsage: number;
+  totalmem: number;
+  freemem: number;
+  task: Record<string, Task>;
 
-    constructor(nodeType = NodeType.worker, timestamp:number, formattedDate:string, uuid: string, ip:string, cpuFree: number, cpuUsage: number, totalmem: number, freemem: number){
-        this.nodeType = nodeType;
-        this.timestamp = timestamp;
-        this.formattedDate = formattedDate
-        this.uuid = uuid
-        this.ip = ip
-        this.totalmem = totalmem
-        this.freemem = freemem
-        this.cpuFree = cpuFree,
-        this.cpuUsage = cpuUsage
-    }
+  constructor(
+    nodeType = NodeType.worker,
+    timestamp: number,
+    formattedDate: string,
+    uuid: string,
+    ip: string,
+    cpuFree: number,
+    cpuUsage: number,
+    totalmem: number,
+    freemem: number,
+    task: Record<string, Task>
+  ) {
+    this.nodeType = nodeType;
+    this.timestamp = timestamp;
+    this.formattedDate = formattedDate;
+    this.uuid = uuid;
+    this.ip = ip;
+    this.totalmem = totalmem;
+    this.freemem = freemem;
+    (this.cpuFree = cpuFree), (this.cpuUsage = cpuUsage);
+    this.task = task;
+  }
 }
 
-export { exchangeType, messageQueue, HeartBeatMessage, NodeType, MQSchemaTypes, messageQueueCfg };
+interface TimerMessage {
+  sentTime: string;
+  ttl: number;
+}
+
+interface MockTaskMessage {
+  processingTime: number;
+}
+
+interface MockStateMessage {
+    uuid: string
+    processedTasksNumber: number
+    totalProcessingTime: number
+}
+
+interface LoadBalancingMessage {
+  priority?: number;
+  prefecthedCount?: number;
+}
+
+export { exchangeType, messageQueue, HeartBeatMessage, NodeType, MQSchemaTypes, messageQueueCfg, TimerMessage, MockTaskMessage, MockStateMessage, LoadBalancingMessage };

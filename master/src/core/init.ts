@@ -26,6 +26,9 @@ import logHandler from "../exceptions/logHandler";
 import logLevel from "../types/log";
 import util from "util";
 import { v4 as uuidv4 } from "uuid";
+import { writeFileSync } from "fs";
+import path from "path";
+import { ask } from "stdio";
 
 class InitManager {
   static mongo: MongoConnectionManager;
@@ -58,7 +61,7 @@ class InitManager {
       console.log(e);
     }
     await Promise.all([this.workerHBMQ.registerGetter()]);
-    // setInterval(this.updateNodeTable.bind(this), 1000);
+    setInterval(this.updateNodeTable.bind(this), 1000);
   }
 
   static async initDB() {
@@ -76,44 +79,6 @@ class InitManager {
       {},
       "workerHB"
     );
-    // this.loadbalancingConfigMQ = await LoadBalancingMQ.init(
-    //   "loadbalancingConfig"
-    // );
-    // this.loadbalancingConfigTimerMQ = await TimerMessageQueue.initTimer(
-    //   "loadbalancingConfigTimer",
-    //   { messageTtl: 2000 },
-    //   async (channel, msg) => {
-    //      if (this.loadbalancingStrategy === LoadBalancingStrategy.PROCESSING_SPEED_FIRST || 'psf'){
-    //          const messageNumbers = Object.values(this.nodeTable).reduce((acc, node) => {
-    //              Object.keys(node.task).forEach(async t => {
-    //                  if(!acc[t]) {
-    //                      acc[t] = (
-    //                        await axios.get(
-    //                          "http://localhost:15672/api/queues/%2F/mockTask",
-    //                          {
-    //                            auth: {
-    //                              username: "guest",
-    //                              password: "guest",
-    //                            },
-    //                          }
-    //                        )
-    //                      ).data.backing_queue_status.len
-    //                  }
-    //              })
-    //              return acc
-    //          }, {} as Record<string,number>)
-    //          const loadBalancingWeight = getLoadBalancingWeight(this.nodeTable, messageNumbers)
-    //          console.log("load-balancing: ", util.inspect(loadBalancingWeight, {
-    //             showHidden: false,
-    //             depth: null,
-    //           })
-    //         )
-    //          await this.loadbalancingConfigMQ.put(loadBalancingWeight)
-    //          channel.ack(msg)
-    //      }
-    //   },
-    //   true
-    // );
   }
 
   static initRouter() {
@@ -186,82 +151,117 @@ class InitManager {
   }
 
   static updateNodeTable() {
-    this.eventCenter.emit(EventNames.log, "INFO", this.nodeTable);
     const curDate = new Date();
     Object.keys(this.nodeTable).forEach((uuid) => {
       const interval = curDate.getTime() - this.nodeTable[uuid].lastActived;
       if (interval > config.updateNodeInterval) {
-        this.eventCenter.emit(
-          EventNames.log,
-          "INFO",
-          `child node ${uuid} has deactived`
-        );
         delete this.nodeTable[uuid];
       }
     });
+    writeFileSync(
+      path.resolve("../master", "node-table.json"),
+      JSON.stringify(this.nodeTable)
+    );
   }
 
   static async initMock(mockOptions: commandLineArgs.CommandLineOptions) {
     this.loadbalancingStrategy = mockOptions.strategy;
+    let putMockTask: Function;
+    let startingTaskID = 0;
     if (
       this.loadbalancingStrategy ===
         LoadBalancingStrategy.PROCESSING_SPEED_FIRST ||
       this.loadbalancingStrategy === LoadBalancingStrategy.PSF
     ) {
       const mockTaskMQ = await MockTaskMQ.init<MockTaskMQ>("mockTask");
-      await Promise.all(
-        Array(mockOptions.taskNumber)
-          .fill(0)
-          .map((_, index) =>
-            mockTaskMQ.put({
-              processingTime: Math.random() * 100,
-              async: mockOptions.async,
-              taskID: index
-            })
-          )
-      );
+      putMockTask = async () => {
+        await Promise.all(
+          Array(mockOptions.taskNumber)
+            .fill(0)
+            .map((_, index) =>
+              mockTaskMQ.put({
+                processingTime: Math.random() * 100,
+                async: mockOptions.async,
+                taskID: index + startingTaskID,
+              })
+            )
+        );
+        startingTaskID += mockOptions.taskNumber;
+      };
     } else {
       const channel = MessageQueue.getChannel();
-      const mockTaskEX = await channel.assertExchange(
-        "MockTaskEX",
-        "topic",
-        {
-          durable: false,
-        }
-      );
+      const mockTaskEX = await channel.assertExchange("MockTaskEX", "topic", {
+        durable: false,
+      });
 
       if (
         this.loadbalancingStrategy === LoadBalancingStrategy.ROUND_ROBIN ||
         this.loadbalancingStrategy === LoadBalancingStrategy.RB
       ) {
         const workerUUIDs = Object.keys(this.nodeTable);
-        let currentNodeIndex = 0;
-        await Promise.all(
-          Array(mockOptions.taskNumber)
-            .fill(0)
-            .map((_, index) => {
-              const currentNodeIndex = index % workerUUIDs.length;
-              return channel.publish(
-                mockTaskEX.exchange,
-                workerUUIDs[currentNodeIndex],
-                Buffer.from(
-                  JSON.stringify({
-                    processingTime: Math.random() * 100,
-                    async: mockOptions.async,
-                    taskID: index
-                  })
-                )
-              );
-            })
-        );
+        const weightString = await ask("please input the weight");
+        const weight = weightString
+          .split(/\s+/)
+          .map((weight) => Number(weight));
+        const weightSum = weight.reduce((prev, acc) => {
+          return acc + prev;
+        }, 0);
+        const weightTable: string[] = [];
+        let weightTableCursor = 0;
+        weight.forEach((w, i) => {
+          for (let j = 0; j < w; j++) {
+            weightTable[weightTableCursor] = workerUUIDs[i];
+            weightTableCursor++;
+          }
+        });
+        putMockTask = async () => {
+          await Promise.all(
+            Array(mockOptions.taskNumber)
+              .fill(0)
+              .map((_, index) => {
+                const currentNodeIndex = index % weightSum;
+                if (
+                  Number(
+                    InitManager.nodeTable[weightTable[currentNodeIndex]].freemem
+                  ) /
+                    Number(
+                      InitManager.nodeTable[weightTable[currentNodeIndex]]
+                        .totalmem
+                    ) <
+                  0.1
+                ) {
+                  return;
+                }
+                return channel.publish(
+                  mockTaskEX.exchange,
+                  weightTable[currentNodeIndex],
+                  Buffer.from(
+                    JSON.stringify({
+                      processingTime: Math.random() * 100,
+                      async: mockOptions.async,
+                      taskID: index + startingTaskID,
+                    })
+                  )
+                );
+              })
+          );
+        };
       } else if (
         this.loadbalancingStrategy ===
           LoadBalancingStrategy.CURREENT_PROCESSING_NUM ||
         this.loadbalancingStrategy === LoadBalancingStrategy.CPN
       ) {
-        
+        putMockTask = async () => {};
+      } else {
+        putMockTask = async () => {};
       }
     }
+
+    await putMockTask();
+    setInterval(async () => {
+      startingTaskID += mockOptions.taskNumber;
+      await putMockTask();
+    }, 30000);
 
     const mockStateMQ = await MockStateMQ.init<MockStateMQ>("mockState");
     const mockStateTable: Record<string, Omit<MockStateMessage, "uuid">> = {};
@@ -275,47 +275,9 @@ class InitManager {
           processedTasksNumber: mockState.processedTasksNumber,
           totalProcessingTime: mockState.totalProcessingTime,
         };
-        console.log(mockStateTable);
         channel.ack(msg);
       }
     );
-    // let startTime = 0;
-    // let endTime = 0;
-    // const monitor = async () => {
-    //   const queueState = (
-    //     await axios.get("http://localhost:15672/api/queues/%2F/mockTask", {
-    //       auth: {
-    //         username: "guest",
-    //         password: "guest",
-    //       },
-    //     })
-    //   ).data;
-    //   console.log(queueState.idle_since);
-    //   if (startTime === 0 && !queueState.idle_since) {
-    //     console.log('start')
-    //     startTime = new Date().getTime();
-    //   }
-    //   if (endTime === 0 && startTime !== 0 && queueState.idle_since) {
-    //     endTime = new Date().getTime();
-    //     console.log('end')
-    //     this.eventCenter.emit("mockEnd");
-    //   }
-    // };
-    // this.eventCenter.on("mockEnd", () => {
-    //   console.log({
-    //     ...mockStateTable,
-    //     totalProcessedTasksNumber: Object.values(mockStateTable).reduce(
-    //       (acc, cur) => {
-    //         return acc + cur.processedTasksNumber;
-    //       },
-    //       0
-    //     ),
-    //   });
-    //   clearInterval(timeout);
-    // });
-    // const timeout = setInterval(async () => {
-    //   await monitor();
-    // }, 100);
   }
 }
 
