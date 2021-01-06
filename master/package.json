@@ -24,7 +24,7 @@
     "@types/uuid": "^8.3.0",
     "address": "^1.1.2",
     "amqplib": "^0.5.5",
-    "axios": "^0.19.2",
+    "axios": "^0.21.1",
     "cheerio": "^1.0.0-rc.3",
     "command-line-args": "^5.1.1",
     "ioredis": "^4.16.1",
