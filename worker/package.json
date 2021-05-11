@@ -32,7 +32,7 @@
     "cheerio": "^1.0.0-rc.3",
     "command-line-args": "^5.1.1",
     "ioredis": "^4.16.1",
-    "lodash": "^4.17.15",
+    "lodash": "^4.17.21",
     "mongoose": "^5.9.7",
     "mongoose-gridfs": "^1.2.34",
     "os-utils": "^0.0.14",
